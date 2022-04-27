@@ -1,0 +1,158 @@
+version: "3.9"
+services:
+  traefik:
+    image: traefik:2.6
+    networks:
+      - homelab
+    command: >
+      --providers.docker=true
+      --log.level=ERROR
+      --accesslog=false
+      --entryPoints.web.address=:3000
+      --providers.docker.exposedByDefault=false
+      --api.dashboard=true
+      --api.insecure=true
+    deploy:
+      restart_policy:
+        condition: on-failure
+    ports:
+      - "18400:3000"
+      - "18401:8080"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+
+  redis:
+    image: redis:alpine
+    ports:
+      - "6379"
+    networks:
+      - homelab
+    deploy:
+      restart_policy:
+        condition: on-failure
+
+  postgres:
+    image: postgres:12-alpine
+    ports:
+      - 5432:5432
+    volumes:
+      - postgres-12-data:/var/lib/postgresql/data
+    networks:
+      - homelab
+    environment:
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+    deploy:
+      restart_policy:
+        condition: on-failure
+
+  nitter:
+    image: zedeus/nitter:latest
+    depends_on:
+      - redis
+    volumes:
+      - ./volumes/nitter.conf:/src/nitter.conf:ro
+    networks:
+      - homelab
+    deploy:
+      restart_policy:
+        condition: on-failure
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.services.nitter.loadbalancer.server.port=8080"
+      - "traefik.http.routers.nitter.rule=Host(`nitter.${DOMAIN_SUFFIX}`)"
+
+  bibliogram:
+    image: ghcr.io/floj/bibliogram:latest
+    volumes:
+      - ./volumes/bibliogram.config.js:/app/config.js:ro
+      - bibliogram-db:/app/db
+    networks:
+      - homelab
+    deploy:
+      restart_policy:
+        condition: on-failure
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.services.bibliogram.loadbalancer.server.port=10407"
+      - "traefik.http.routers.bibliogram.rule=Host(`bibliogram.${DOMAIN_SUFFIX}`)"
+
+  gitea:
+    image: gitea/gitea:1.16
+    volumes:
+      - gitea-data:/data
+    networks:
+      - homelab
+    depends_on:
+      - postgres
+    ports:
+      - 18022:22
+    deploy:
+      restart_policy:
+        condition: on-failure
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.services.gitea.loadbalancer.server.port=3000"
+      - "traefik.http.routers.gitea.rule=Host(`git.${DOMAIN_SUFFIX}`)"
+
+  influxdb:
+    image: influxdb:1.8-alpine
+    volumes:
+      - ./volumes/influxdb.conf:/etc/influxdb/influxdb.conf:ro
+      - influxdb-data:/var/lib/influxdb
+    networks:
+      - homelab
+    deploy:
+      restart_policy:
+        condition: on-failure
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.services.influxdb.loadbalancer.server.port=8086"
+      - "traefik.http.routers.influxdb.rule=Host(`influxdb.${DOMAIN_SUFFIX}`)"
+
+  grafana:
+    image: grafana/grafana:8.4.6
+    volumes:
+      - ./volumes/grafana.ini:/etc/grafana/grafana.ini:ro
+      - grafana-data:/val/lib/grafana
+    networks:
+      - homelab
+    depends_on:
+      - postgres
+      - influxdb
+    deploy:
+      restart_policy:
+        condition: on-failure
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.services.grafana.loadbalancer.server.port=3000"
+      - "traefik.http.routers.grafana.rule=Host(`grafana.${DOMAIN_SUFFIX}`)"
+
+  nextcloud:
+    image: nextcloud:stable-fpm-alpine
+    volumes:
+      - /mnt/storage/apps/nextcloud:/var/www/html
+    networks:
+      - homelab
+    ports:
+      - 18130:9000
+    depends_on:
+      - postgres
+    deploy:
+      restart_policy:
+        condition: on-failure
+
+networks:
+  homelab:
+
+volumes:
+  bibliogram-db:
+  postgres-12-data:
+    external: true
+  gitea-data:
+    external: true
+  influxdb-data:
+    external: true
+  grafana-data:
+    external: true
+
+
